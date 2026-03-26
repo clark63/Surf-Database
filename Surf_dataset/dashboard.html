@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SwellCast — Live Surf Conditions</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ocean-deep:  #05111f;
+    --card-bg:     rgba(13,45,71,0.75);
+    --card-border: rgba(26,140,110,0.25);
+    --tide:        #1a8c6e;
+    --tide-light:  #26c49a;
+    --text:        #e8f4f0;
+    --muted:       #7a9bb5;
+  }
+  *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+  body {
+    background:var(--ocean-deep); color:var(--text);
+    font-family:'DM Sans',sans-serif; font-weight:300;
+    min-height:100vh; overflow-x:hidden;
+  }
+  body::before {
+    content:''; position:fixed; inset:0; z-index:-1;
+    background:
+      radial-gradient(ellipse 80% 50% at 20% 80%, rgba(26,140,110,0.07) 0%, transparent 60%),
+      linear-gradient(180deg,#05111f 0%,#0a1e30 60%,#061520 100%);
+  }
+
+  /* ── Header ── */
+  header {
+    padding:1.5rem 1.25rem 1.1rem;
+    display:flex; align-items:center; justify-content:space-between;
+    border-bottom:0.5px solid var(--card-border);
+    max-width:1400px; margin:0 auto; gap:1rem; flex-wrap:wrap;
+  }
+  .header-left { display:flex; align-items:center; gap:1rem; }
+  .back-btn {
+    display:flex; align-items:center; gap:6px;
+    background:rgba(26,140,110,0.1); border:0.5px solid var(--card-border);
+    border-radius:8px; padding:6px 12px;
+    font-family:'DM Mono',monospace; font-size:0.65rem; color:var(--muted);
+    letter-spacing:0.07em; text-transform:uppercase;
+    cursor:pointer; text-decoration:none; transition:background 0.15s, color 0.15s;
+  }
+  .back-btn:hover { background:rgba(26,140,110,0.2); color:var(--text); }
+  .logo-title { font-family:'Bebas Neue',sans-serif; font-size:clamp(1.8rem,4vw,2.8rem); letter-spacing:0.06em; line-height:1; }
+  .logo-title span { color:var(--tide-light); }
+  .logo-sub { font-family:'DM Mono',monospace; font-size:0.63rem; color:var(--muted); letter-spacing:0.13em; text-transform:uppercase; margin-top:3px; }
+  .header-right { display:flex; flex-direction:column; align-items:flex-end; gap:5px; }
+  .live-pill {
+    display:flex; align-items:center; gap:7px;
+    background:rgba(26,140,110,0.12); border:0.5px solid var(--card-border);
+    border-radius:20px; padding:5px 13px;
+    font-family:'DM Mono',monospace; font-size:0.67rem; color:var(--tide-light); letter-spacing:0.04em;
+  }
+  .dot { width:7px; height:7px; border-radius:50%; background:var(--tide-light); animation:pulse 2s ease-in-out infinite; flex-shrink:0; }
+  .dot.stale { background:#ff6b6b; animation:none; }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.4;transform:scale(0.75)} }
+  .last-updated { font-family:'DM Mono',monospace; font-size:0.61rem; color:var(--muted); letter-spacing:0.04em; }
+
+  /* ── Banners ── */
+  .banner-wrap { max-width:1400px; margin:0 auto; padding:0 1.25rem; }
+  #stale-banner, #error-banner { display:none; margin-top:0.75rem; }
+  #stale-banner-inner { background:rgba(255,107,107,0.1); border:0.5px solid rgba(255,107,107,0.35); border-radius:10px; padding:9px 14px; font-family:'DM Mono',monospace; font-size:0.73rem; color:#ffaaaa; letter-spacing:0.03em; }
+  #error-banner-inner { background:rgba(255,107,107,0.07); border:0.5px solid rgba(255,107,107,0.2); border-radius:10px; padding:8px 14px; font-size:0.7rem; color:#f09090; }
+
+  /* ── Main ── */
+  main { max-width:1400px; margin:0 auto; padding:1.25rem; }
+
+  /* Loading */
+  #loading { text-align:center; padding:5rem 2rem; }
+  .loading-wave { display:flex; justify-content:center; gap:5px; margin-bottom:1.25rem; }
+  .loading-wave span { display:block; width:5px; height:30px; background:var(--tide-light); border-radius:3px; animation:wave-bar 1.2s ease-in-out infinite; }
+  .loading-wave span:nth-child(2){animation-delay:.1s;height:18px}
+  .loading-wave span:nth-child(3){animation-delay:.2s;height:40px}
+  .loading-wave span:nth-child(4){animation-delay:.3s;height:26px}
+  .loading-wave span:nth-child(5){animation-delay:.4s;height:34px}
+  @keyframes wave-bar { 0%,100%{transform:scaleY(0.4);opacity:0.5} 50%{transform:scaleY(1);opacity:1} }
+  .loading-text { font-family:'DM Mono',monospace; font-size:0.7rem; color:var(--muted); letter-spacing:0.1em; text-transform:uppercase; }
+
+  /* ── Cards grid ── */
+  #cards { display:none; grid-template-columns:1fr; gap:1rem; }
+  @media(min-width:600px)  { #cards { grid-template-columns:repeat(2,1fr); } }
+  @media(min-width:1024px) { #cards { grid-template-columns:repeat(3,1fr); } }
+
+  /* ── Card ── */
+  .beach-card { background:var(--card-bg); border:0.5px solid var(--card-border); border-radius:16px; overflow:hidden; backdrop-filter:blur(10px); transition:border-color .2s,transform .2s; animation:card-in .45s ease both; }
+  .beach-card:hover { border-color:rgba(26,140,110,0.5); transform:translateY(-2px); }
+  @keyframes card-in { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:translateY(0)} }
+  .beach-card:nth-child(1){animation-delay:.04s} .beach-card:nth-child(2){animation-delay:.08s}
+  .beach-card:nth-child(3){animation-delay:.12s} .beach-card:nth-child(4){animation-delay:.16s}
+  .beach-card:nth-child(5){animation-delay:.20s} .beach-card:nth-child(6){animation-delay:.24s}
+
+  .card-header { padding:1rem 1.25rem .85rem; display:flex; align-items:flex-start; justify-content:space-between; border-bottom:0.5px solid rgba(26,140,110,0.12); }
+  .card-location h2 { font-family:'Bebas Neue',sans-serif; font-size:1.5rem; letter-spacing:.05em; line-height:1; }
+  .card-location p  { font-size:.65rem; color:var(--muted); margin-top:3px; letter-spacing:.08em; text-transform:uppercase; font-family:'DM Mono',monospace; }
+  .rating-badge { padding:4px 11px 5px; border-radius:20px; font-family:'Bebas Neue',sans-serif; font-size:1rem; letter-spacing:.1em; flex-shrink:0; border:1.5px solid; }
+
+  .card-stats-row { display:grid; grid-template-columns:1fr 1fr 1fr; border-bottom:0.5px solid rgba(26,140,110,0.12); }
+  .stat-cell { padding:.85rem .75rem; display:flex; flex-direction:column; gap:2px; }
+  .stat-cell:not(:last-child) { border-right:0.5px solid rgba(26,140,110,0.12); }
+  .stat-label { font-family:'DM Mono',monospace; font-size:.58rem; color:var(--muted); letter-spacing:.1em; text-transform:uppercase; }
+  .stat-value { font-size:1.45rem; font-weight:300; line-height:1.1; }
+  .stat-value em { font-style:normal; font-size:.7rem; color:var(--muted); margin-left:1px; }
+  .stat-sub { font-size:.63rem; color:var(--muted); margin-top:1px; }
+
+  .card-body { padding:.85rem 1.25rem; display:flex; align-items:center; gap:1rem; }
+  .score-block { flex:1; }
+  .score-top { display:flex; justify-content:space-between; font-family:'DM Mono',monospace; font-size:.6rem; color:var(--muted); letter-spacing:.07em; text-transform:uppercase; margin-bottom:5px; }
+  .score-bar-track { height:4px; background:rgba(255,255,255,0.07); border-radius:2px; overflow:hidden; }
+  .score-bar-fill { height:100%; border-radius:2px; transition:width 1s ease; }
+  .dir-row { margin-top:8px; font-family:'DM Mono',monospace; font-size:.6rem; color:var(--muted); letter-spacing:.07em; text-transform:uppercase; }
+  .dir-row span { color:var(--text); font-weight:500; }
+
+  .compass-wrap { display:flex; flex-direction:column; align-items:center; gap:3px; flex-shrink:0; }
+  .compass-label { font-family:'DM Mono',monospace; font-size:.58rem; color:var(--muted); letter-spacing:.1em; text-transform:uppercase; }
+  .compass-svg { width:68px; height:68px; }
+
+  .card-chart { padding:0 1.25rem 1.1rem; }
+  .chart-title { font-family:'DM Mono',monospace; font-size:.6rem; color:var(--muted); letter-spacing:.1em; text-transform:uppercase; margin-bottom:7px; }
+  .chart-wrap { height:88px; }
+
+  footer { text-align:center; padding:1.5rem 1.25rem 2rem; font-family:'DM Mono',monospace; font-size:.62rem; color:var(--muted); letter-spacing:.07em; border-top:0.5px solid var(--card-border); max-width:1400px; margin:0 auto; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <a class="back-btn" href="index.html">← Map</a>
+    <div>
+      <div class="logo-title">SWELL<span>CAST</span></div>
+      <div class="logo-sub" id="region-subtitle">Live surf conditions</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="live-pill">
+      <div class="dot" id="status-dot"></div>
+      <span id="countdown">Fetching data…</span>
+    </div>
+    <div class="last-updated" id="last-updated"></div>
+  </div>
+</header>
+
+<div class="banner-wrap">
+  <div id="stale-banner"><div id="stale-banner-inner">⚠ Data feed unavailable — showing last known conditions.</div></div>
+  <div id="error-banner"><div id="error-banner-inner"></div></div>
+</div>
+
+<main>
+  <div id="loading">
+    <div class="loading-wave"><span></span><span></span><span></span><span></span><span></span></div>
+    <div class="loading-text" id="loading-text">Paddling out…</div>
+  </div>
+  <div id="cards"></div>
+</main>
+
+<footer>Data — Open-Meteo Marine API &nbsp;·&nbsp; Auto-refreshes every 5 min &nbsp;·&nbsp; VDES39915 · Project 2</footer>
+
+<script src="ocean-api.js"></script>
+<script>
+  // Read region from URL
+  const params     = new URLSearchParams(window.location.search);
+  const regionId   = params.get('region');
+  const regionName = params.get('regionName');
+
+  if (regionId) {
+    setBeachesFromRegion(regionId);
+    if (regionName) {
+      document.getElementById('region-subtitle').textContent = `${regionName} · Live surf conditions`;
+      document.title = `SwellCast — ${regionName}`;
+    }
+  }
+
+  // Countdown
+  let refreshAt = null;
+  function startCountdown(ms) { refreshAt = Date.now() + ms; }
+  setInterval(() => {
+    if (!refreshAt) return;
+    const rem = Math.max(0, refreshAt - Date.now());
+    const m = Math.floor(rem / 60000), s = Math.floor((rem % 60000) / 1000);
+    document.getElementById('countdown').textContent =
+      rem === 0 ? 'Refreshing…' : `Next refresh ${m}:${String(s).padStart(2,'0')}`;
+  }, 1000);
+
+  // Compass
+  function buildCompass(direction) {
+    return `<svg class="compass-svg" viewBox="0 0 68 68" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="34" cy="34" r="28" fill="none" stroke="rgba(26,140,110,0.22)" stroke-width="0.75"/>
+      <circle cx="34" cy="34" r="22" fill="none" stroke="rgba(26,140,110,0.1)" stroke-width="0.5"/>
+      <line x1="34" y1="6"  x2="34" y2="11" stroke="rgba(232,244,240,0.28)" stroke-width="1" stroke-linecap="round"/>
+      <line x1="34" y1="57" x2="34" y2="62" stroke="rgba(232,244,240,0.28)" stroke-width="1" stroke-linecap="round"/>
+      <line x1="6"  y1="34" x2="11" y2="34" stroke="rgba(232,244,240,0.28)" stroke-width="1" stroke-linecap="round"/>
+      <line x1="57" y1="34" x2="62" y2="34" stroke="rgba(232,244,240,0.28)" stroke-width="1" stroke-linecap="round"/>
+      <text x="34" y="5" text-anchor="middle" font-family="'DM Mono',monospace" font-size="5.5" fill="rgba(122,155,181,0.65)">N</text>
+      <g transform="rotate(${direction},34,34)">
+        <line x1="34" y1="47" x2="34" y2="23" stroke="rgba(232,244,240,0.2)" stroke-width="1" stroke-linecap="round" stroke-dasharray="2 3"/>
+        <polygon points="34,19 30,27 38,27" fill="#26c49a" opacity="0.92"/>
+        <circle cx="34" cy="34" r="2.5" fill="rgba(26,140,110,0.55)"/>
+      </g>
+      <text x="34" y="65" text-anchor="middle" font-family="'DM Mono',monospace" font-size="6" fill="rgba(122,155,181,0.75)">${direction}°</text>
+    </svg>`;
+  }
+
+  // Helpers
+  function cardinalLabel(deg) {
+    const d=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+    return d[Math.round(deg/22.5)%16];
+  }
+  function windDesc(h) {
+    if(h<0.3) return 'Glassy'; if(h<0.7) return 'Light';
+    if(h<1.2) return 'Moderate'; if(h<2.0) return 'Strong'; return 'Stormy';
+  }
+  function periodQuality(s) {
+    if(s>=12) return 'Clean'; if(s>=8) return 'Average'; return 'Choppy';
+  }
+
+  // Render card
+  function renderCard(beach, current, score, rating, forecast, idx) {
+    const rs  = rating;
+    const dir = cardinalLabel(Math.round(current.waveDirection));
+    const card = document.createElement('div');
+    card.className = 'beach-card';
+    card.style.animationDelay = `${idx*0.06}s`;
+
+    card.innerHTML = `
+      <div class="card-header">
+        <div class="card-location"><h2>${beach.name}</h2><p>${beach.country}</p></div>
+        <div class="rating-badge" style="color:${rs.color};background:${rs.bg};border-color:${rs.border}">${rs.label}</div>
+      </div>
+      <div class="card-stats-row">
+        <div class="stat-cell">
+          <div class="stat-label">Wave</div>
+          <div class="stat-value">${current.waveHeight.toFixed(1)}<em>m</em></div>
+          <div class="stat-sub">Swell ${current.swellHeight.toFixed(1)}m</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-label">Period</div>
+          <div class="stat-value">${current.swellPeriod.toFixed(0)}<em>s</em></div>
+          <div class="stat-sub">${periodQuality(current.swellPeriod)}</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-label">Wind sea</div>
+          <div class="stat-value" style="font-size:1rem;padding-top:4px">${windDesc(current.windWaveHeight)}</div>
+          <div class="stat-sub">Chop ${current.windWaveHeight.toFixed(1)}m</div>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="score-block">
+          <div class="score-top"><span>Surf score</span><span style="color:${rs.color};font-weight:500">${score}/100</span></div>
+          <div class="score-bar-track"><div class="score-bar-fill" id="bar-${idx}" style="width:0%;background:${rs.color}"></div></div>
+          <div class="dir-row">Direction &nbsp;<span>${dir}</span></div>
+        </div>
+        <div class="compass-wrap">
+          <div class="compass-label">Swell from</div>
+          ${buildCompass(Math.round(current.waveDirection))}
+        </div>
+      </div>
+      <div class="card-chart">
+        <div class="chart-title">7-day swell forecast</div>
+        <div class="chart-wrap"><canvas id="chart-${idx}"></canvas></div>
+      </div>`;
+
+    document.getElementById('cards').appendChild(card);
+
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        const bar = document.getElementById(`bar-${idx}`);
+        if (bar) bar.style.width = `${score}%`;
+      }, 180 + idx * 70);
+    });
+
+    const labels = forecast.map(d => {
+      return new Date(d.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',day:'numeric'});
+    });
+
+    new Chart(document.getElementById(`chart-${idx}`).getContext('2d'), {
+      type:'line',
+      data:{
+        labels,
+        datasets:[
+          { label:'Swell (m)', data:forecast.map(d=>parseFloat(d.swellHeight.toFixed(2))),
+            borderColor:'#26c49a', backgroundColor:'rgba(38,196,154,0.07)',
+            borderWidth:1.5, pointRadius:3, pointBackgroundColor:'#26c49a',
+            tension:0.4, fill:true, yAxisID:'y' },
+          { label:'Score', data:forecast.map(d=>d.score),
+            borderColor:rs.color, backgroundColor:'transparent',
+            borderWidth:1, pointRadius:2, pointBackgroundColor:rs.color,
+            tension:0.4, borderDash:[3,3], yAxisID:'y1' }
+        ]
+      },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        interaction:{mode:'index',intersect:false},
+        plugins:{
+          legend:{display:false},
+          tooltip:{
+            backgroundColor:'rgba(5,17,31,0.95)',
+            borderColor:'rgba(26,140,110,0.35)',borderWidth:0.5,
+            titleColor:'#7a9bb5',bodyColor:'#e8f4f0',
+            titleFont:{family:"'DM Mono',monospace",size:10},
+            bodyFont:{family:"'DM Sans',sans-serif",size:11},padding:8
+          }
+        },
+        scales:{
+          x:{ ticks:{color:'#4a6a80',font:{family:"'DM Mono',monospace",size:9},maxRotation:0}, grid:{color:'rgba(26,140,110,0.07)'} },
+          y:{ position:'left', ticks:{color:'#4a6a80',font:{family:"'DM Mono',monospace",size:9},callback:v=>v.toFixed(1)+'m'}, grid:{color:'rgba(26,140,110,0.07)'} },
+          y1:{ position:'right', min:0, max:100, ticks:{color:'#4a6a80',font:{family:"'DM Mono',monospace",size:9}}, grid:{display:false} }
+        }
+      }
+    });
+  }
+
+  // Render dashboard
+  function renderDashboard({ results, errors, fromCache }) {
+    const container   = document.getElementById('cards');
+    const statusDot   = document.getElementById('status-dot');
+    const staleBanner = document.getElementById('stale-banner');
+    const errBanner   = document.getElementById('error-banner');
+    const errInner    = document.getElementById('error-banner-inner');
+    container.innerHTML = '';
+
+    if (results.length === 0) {
+      staleBanner.style.display='block'; statusDot.classList.add('stale');
+      document.getElementById('loading').style.display='none'; return;
+    }
+    staleBanner.style.display='none'; statusDot.classList.remove('stale');
+
+    if (errors && errors.length > 0) {
+      errBanner.style.display='block';
+      errInner.textContent=`⚠ Could not load: ${errors.map(e=>e.beach).join(', ')} — retrying next refresh.`;
+    } else { errBanner.style.display='none'; }
+
+    document.getElementById('loading').style.display='none';
+    container.style.display='grid';
+
+    const now = new Date();
+    document.getElementById('last-updated').textContent =
+      `Updated ${now.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}${fromCache?' · cached':''}`;
+
+    results.forEach((beach, idx) => {
+      const current  = getCurrentConditions(beach);
+      const score    = surfRating(current.waveHeight, current.wavePeriod, current.windWaveHeight);
+      const rating   = ratingLabel(score);
+      const forecast = getDailyBest(beach);
+      renderCard(beach, current, score, rating, forecast, idx);
+    });
+
+    startCountdown(CACHE_TTL);
+  }
+
+  startAutoRefresh(renderDashboard, (done, total, name) => {
+    document.getElementById('loading-text').textContent = `Loading ${name}… (${done}/${total})`;
+  });
+</script>
+</body>
+</html>
